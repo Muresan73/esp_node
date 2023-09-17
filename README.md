@@ -7,6 +7,7 @@ It is a continuation of my previous work on [esp_termo](https://github.com/Mures
 
 ## Features
 
+- [x] Connect Wifi
 - [ ] Timer -> Daily report on Discord
 - [ ] Soil and humidity sensor reads
 - [ ] Deep sleep to save energy

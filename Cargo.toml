@@ -22,18 +22,20 @@ esp-println = { version = "0.6.0", features = ["esp32", "log"] }
 log = { version = "0.4.18" }
 esp-wifi = { git = "https://github.com/esp-rs/esp-wifi/", features = [
     "esp32",
-    "wifi-logs",
+    # "wifi-logs",
     "wifi",
-    "embedded-svc",
+    # "embedded-svc",
     "embassy-net",
-    "async",
+    # "async",
 ] }
 smoltcp = { version = "0.10.0", default-features = false, features = [
     "proto-igmp",
     "proto-ipv4",
+    "proto-dns",
     "socket-tcp",
     "socket-icmp",
     "socket-udp",
+    "socket-dns",
     "medium-ethernet",
     "proto-dhcpv4",
     "socket-raw",
@@ -45,11 +47,20 @@ heapless = { version = "0.7.14", default-features = false }
 embassy-time = { version = "0.1.3" }
 
 # embedded-hal-async = { version = "=1.0.0-rc.1", optional = true }
-embedded-io-async = { version = "0.5.0", optional = true }
-embassy-executor = { version = "0.3.0", features = [
+embedded-io-async = { version = "0.5.0" }
+embassy-executor = { version = "0.3.0", package = "embassy-executor", features = [
     "nightly",
     "executor-thread",
+    "integrated-timers",
 ] }
 embassy-sync = { version = "0.3.0", optional = true }
 embassy-futures = { version = "0.1.0", optional = true }
 static_cell = { version = "1.2.0", features = ["nightly"] }
+dotenvy_macro = "0.15.7"
+embassy-net = { version = "0.1.0", features = [
+    "nightly",
+    "tcp",
+    "udp",
+    "dhcpv4",
+    "medium-ethernet",
+] }
