@@ -4,6 +4,8 @@ runner = "espflash flash --monitor"
 
 [env]
 ESP_LOGLEVEL = "DEBUG"
+SMOLTCP_DNS_MAX_SERVER_COUNT = "3"
+
 [build]
 rustflags = [
   "-C","link-arg=-Tlinkall.x",

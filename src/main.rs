@@ -4,6 +4,7 @@
 
 use dotenvy_macro::dotenv;
 use embassy_executor::_export::StaticCell;
+use embassy_net::dns::DnsQueryType;
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{Config, Ipv4Address, Stack, StackResources};
 use embassy_time::{Duration, Timer};
@@ -48,9 +49,6 @@ fn main() -> ! {
     )
     .timer0;
 
-    // ================
-    // what is this linking? binary
-
     let init = initialize(
         EspWifiInitFor::Wifi,
         timer,
@@ -59,7 +57,7 @@ fn main() -> ! {
         &clocks,
     )
     .unwrap();
-    // ================
+
     let (wifi, ..) = peripherals.RADIO.split();
     let (wifi_interface, controller) =
         esp_wifi::wifi::new_with_mode(&init, wifi, WifiMode::Sta).unwrap();
@@ -73,7 +71,7 @@ fn main() -> ! {
 
     let config = Config::dhcpv4(Default::default());
 
-    let seed = 1234; // very random, very secure seed
+    let seed = 1234; // TODO add time
 
     // Init network stack
     let stack = &*singleton!(Stack::new(
@@ -138,7 +136,6 @@ async fn task(stack: &'static Stack<WifiDevice<'static>>) {
         if stack.is_link_up() {
             break;
         }
-        println!("still waiting...");
         Timer::after(Duration::from_millis(500)).await;
     }
 
@@ -146,6 +143,10 @@ async fn task(stack: &'static Stack<WifiDevice<'static>>) {
     loop {
         if let Some(config) = stack.config_v4() {
             println!("Got IP: {}", config.address);
+            println!("DNS servers:");
+            for server in config.dns_servers {
+                println!("Dns IP: {}", server);
+            }
             break;
         }
         Timer::after(Duration::from_millis(500)).await;
@@ -158,7 +159,20 @@ async fn task(stack: &'static Stack<WifiDevice<'static>>) {
 
         socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
 
-        let remote_endpoint = (Ipv4Address::new(142, 250, 185, 115), 80);
+        let address = match stack
+            .dns_query("www.mobile-j.de", DnsQueryType::A)
+            .await
+            .map(|a| a[0])
+        {
+            Ok(address) => address,
+            Err(e) => {
+                println!("DNS lookup error: {e:?}");
+                continue;
+            }
+        };
+
+        println!("{}", address);
+        let remote_endpoint = (address, 80);
         println!("connecting...");
         let r = socket.connect(remote_endpoint).await;
         if let Err(e) = r {
