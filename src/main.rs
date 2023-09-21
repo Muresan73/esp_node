@@ -2,6 +2,7 @@
 #![no_main]
 #![feature(type_alias_impl_trait)]
 
+extern crate alloc;
 use dotenvy_macro::dotenv;
 use embassy_executor::_export::StaticCell;
 use embassy_net::dns::DnsQueryType;
@@ -15,11 +16,13 @@ use esp_wifi::wifi::{WifiController, WifiDevice, WifiEvent, WifiMode, WifiState}
 use esp_wifi::{initialize, EspWifiInitFor};
 use hal::clock::ClockControl;
 use hal::embassy::executor::Executor;
-use hal::Rng;
+use hal::rng::Rng;
 use hal::{embassy, peripherals::Peripherals, prelude::*, timer::TimerGroup};
 
 const SSID: &str = dotenv!("SSID");
 const PASSWORD: &str = dotenv!("PASSWORD");
+const DISCORD_HOST: &str = dotenv!("DISCORD_HOST");
+const DISCORD_WEBHOOK: &str = dotenv!("DISCORD_WEBHOOK");
 
 macro_rules! singleton {
     ($val:expr) => {{
@@ -32,10 +35,24 @@ macro_rules! singleton {
 
 static EXECUTOR: StaticCell<Executor> = StaticCell::new();
 
+#[global_allocator]
+static ALLOCATOR: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();
+
+fn init_heap() {
+    const HEAP_SIZE: usize = 1024;
+    static mut HEAP: core::mem::MaybeUninit<[u8; HEAP_SIZE]> = core::mem::MaybeUninit::uninit();
+
+    unsafe {
+        ALLOCATOR.init(HEAP.as_mut_ptr() as *mut u8, HEAP_SIZE);
+    }
+}
+
 #[entry]
 fn main() -> ! {
     // #[cfg(feature = "log")]
     esp_println::logger::init_logger(log::LevelFilter::Info);
+
+    init_heap();
 
     let peripherals = Peripherals::take();
 
@@ -85,7 +102,7 @@ fn main() -> ! {
     executor.run(|spawner| {
         spawner.spawn(connection(controller)).ok();
         spawner.spawn(net_task(stack)).ok();
-        spawner.spawn(task(stack)).ok();
+        spawner.spawn(message_discord(stack)).ok();
     })
 }
 
@@ -128,10 +145,11 @@ async fn net_task(stack: &'static Stack<WifiDevice<'static>>) {
 }
 
 #[embassy_executor::task]
-async fn task(stack: &'static Stack<WifiDevice<'static>>) {
+async fn message_discord(stack: &'static Stack<WifiDevice<'static>>) {
     let mut rx_buffer = [0; 4096];
     let mut tx_buffer = [0; 4096];
 
+    // Add await once available from embasst_net crate
     loop {
         if stack.is_link_up() {
             break;
@@ -141,15 +159,17 @@ async fn task(stack: &'static Stack<WifiDevice<'static>>) {
 
     println!("Waiting to get IP address...");
     loop {
-        if let Some(config) = stack.config_v4() {
-            println!("Got IP: {}", config.address);
-            println!("DNS servers:");
-            for server in config.dns_servers {
-                println!("Dns IP: {}", server);
-            }
+        if stack.is_config_up() {
             break;
         }
         Timer::after(Duration::from_millis(500)).await;
+    }
+
+    let config = stack.config_v4().unwrap();
+    println!("Got IP: {}", config.address);
+    println!("DNS servers:");
+    for server in config.dns_servers {
+        println!("Dns IP: {}", server);
     }
 
     loop {
@@ -160,7 +180,7 @@ async fn task(stack: &'static Stack<WifiDevice<'static>>) {
         socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
 
         let address = match stack
-            .dns_query("www.mobile-j.de", DnsQueryType::A)
+            .dns_query(DISCORD_HOST, DnsQueryType::A)
             .await
             .map(|a| a[0])
         {
@@ -172,7 +192,7 @@ async fn task(stack: &'static Stack<WifiDevice<'static>>) {
         };
 
         println!("{}", address);
-        let remote_endpoint = (address, 80);
+        let remote_endpoint = (address, 443);
         println!("connecting...");
         let r = socket.connect(remote_endpoint).await;
         if let Err(e) = r {
@@ -181,28 +201,60 @@ async fn task(stack: &'static Stack<WifiDevice<'static>>) {
         }
         println!("connected!");
         let mut buf = [0; 1024];
-        loop {
-            use embedded_svc::io::asynch::Write;
-            let r = socket
-                .write_all(b"GET / HTTP/1.0\r\nHost: www.mobile-j.de\r\n\r\n")
-                .await;
-            if let Err(e) = r {
-                println!("write error: {:?}", e);
-                break;
-            }
-            let n = match socket.read(&mut buf).await {
-                Ok(0) => {
-                    println!("read EOF");
-                    break;
-                }
-                Ok(n) => n,
-                Err(e) => {
-                    println!("read error: {:?}", e);
-                    break;
-                }
-            };
-            println!("{}", core::str::from_utf8(&buf[..n]).unwrap());
-        }
-        Timer::after(Duration::from_secs(60)).await;
+        let url = alloc::format!(DISCORD_WEBHOOK, "443");
+        let mut client = reqwless::client::HttpClient::new_with_tls(
+            &socket,
+            &DNS,
+            TlsConfig::new(seed as u64, &mut tls_rx, &mut tls_tx, TlsVerify::None),
+        ); // Types implementing embedded-nal-async
+        let mut rx_buf = [0; 4096];
+        let response = client
+            .request(Method::POST, &url)
+            .await
+            .unwrap()
+            .body(b"PING")
+            .content_type(ContentType::TextPlain)
+            .send(&mut rx_buf)
+            .await
+            .unwrap();
+
+        let message = "{\"msg\":\"hello\"}";
+        let request = alloc::format!( "POST /api/webhooks/1151636331458461856/joImzPMcPrh6Qj-2yT1Yk3dmZlZguJxpToEisW5yItWD4PcPt7JHnv0T5dM5IFOd_7D1 HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{{\"content\":\"hello\"}}",
+            DISCORD_HOST,
+            message.len()
+        );
+
+        return;
+        // let message = "{\"msg\":\"hello\"}";
+        // let request = alloc::format!( "POST /api/webhooks/1151636331458461856/joImzPMcPrh6Qj-2yT1Yk3dmZlZguJxpToEisW5yItWD4PcPt7JHnv0T5dM5IFOd_7D1 HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{{\"content\":\"hello\"}}",
+        //     DISCORD_HOST,
+        //     message.len()
+        // );
+
+        // println!("{request}");
+
+        // use embedded_svc::io::asynch::Write;
+        // let r = socket.write_all(request.as_bytes()).await;
+        // if let Err(e) = r {
+        //     println!("write error: {:?}", e);
+        //     break;
+        // }
+        // let n = match socket.read(&mut buf).await {
+        //     Ok(0) => {
+        //         println!("read EOF");
+        //         break;
+        //     }
+        //     Ok(n) => n,
+        //     Err(e) => {
+        //         println!("read error: {:?}", e);
+        //         break;
+        //     }
+        // };
+        // println!("{}", core::str::from_utf8(&buf[..n]).unwrap());
+        // return;
     }
 }
+
+//https://github.com/drogue-iot/embedded-tls/blob/main/examples/embassy/src/main.rs
+// https://docs.rs/embedded-tls/latest/embedded_tls/
+//innen folyt kov
