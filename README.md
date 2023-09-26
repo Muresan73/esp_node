@@ -8,7 +8,15 @@ It is a continuation of my previous work on [esp_termo](https://github.com/Mures
 ## Features
 
 - [x] Connect Wifi
-- [ ] Timer -> Daily report on Discord
+- [ ] Timer -> Daily report
 - [ ] Soil and humidity sensor reads
 - [ ] Deep sleep to save energy
 - [ ] MQTT connectivity
+
+## Missing
+
+#### HTTP TLS
+Ecosistem is not mature enough, packages may require non-release repo builds and unstable apis, so I decided to come back later and finish features requring such capabilites later.
+Libraries tested:
+
+

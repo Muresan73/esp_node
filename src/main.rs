@@ -4,19 +4,25 @@
 
 use dotenvy_macro::dotenv;
 use embassy_executor::_export::StaticCell;
-use embassy_net::dns::DnsQueryType;
-use embassy_net::tcp::TcpSocket;
-use embassy_net::{Config, Ipv4Address, Stack, StackResources};
+use embassy_net::{Config, Stack, StackResources};
 use embassy_time::{Duration, Timer};
 use embedded_svc::wifi::{ClientConfiguration, Configuration, Wifi};
 use esp_backtrace as _;
 use esp_println::println;
 use esp_wifi::wifi::{WifiController, WifiDevice, WifiEvent, WifiMode, WifiState};
 use esp_wifi::{initialize, EspWifiInitFor};
+use hal::adc::{AdcConfig, Attenuation, ADC, ADC1};
 use hal::clock::ClockControl;
 use hal::embassy::executor::Executor;
-use hal::Rng;
-use hal::{embassy, peripherals::Peripherals, prelude::*, timer::TimerGroup};
+use hal::i2c::I2C;
+use hal::peripherals::{Interrupt, I2C0};
+use hal::{embassy, peripherals::Peripherals, prelude::*, timer::TimerGroup, IO};
+use hal::{interrupt, Rng};
+
+mod sensor;
+use log::info;
+use sensor::bme280::Bme280Extention;
+use sensor::soil::SoilMoisture;
 
 const SSID: &str = dotenv!("SSID");
 const PASSWORD: &str = dotenv!("PASSWORD");
@@ -81,11 +87,34 @@ fn main() -> ! {
         seed
     ));
 
+    // ================  init sensors  ================
+
+    let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
+    let i2c0 = hal::i2c::I2C::new(
+        peripherals.I2C0,
+        io.pins.gpio21,
+        io.pins.gpio22,
+        400u32.kHz(),
+        &mut system.peripheral_clock_control,
+        &clocks,
+    );
+
+    // Create ADC instances
+    let analog = peripherals.SENS.split();
+    let mut adc1_config = AdcConfig::new();
+    let adc_pin =
+        adc1_config.enable_pin(io.pins.gpio36.into_analog(), Attenuation::Attenuation11dB);
+    let adc1 = ADC::<ADC1>::adc(analog.adc1, adc1_config).unwrap();
+    let soil_sensor = SoilMoisture::new(adc1, adc_pin).unwrap();
+
+    // ================
+
     let executor = EXECUTOR.init(Executor::new());
     executor.run(|spawner| {
-        spawner.spawn(connection(controller)).ok();
-        spawner.spawn(net_task(stack)).ok();
-        spawner.spawn(task(stack)).ok();
+        // spawner.spawn(connection(controller)).ok();
+        // spawner.spawn(net_task(stack)).ok();
+        // spawner.spawn(task(stack)).ok();
+        spawner.spawn(measurements(i2c0, soil_sensor)).ok();
     })
 }
 
@@ -128,6 +157,38 @@ async fn net_task(stack: &'static Stack<WifiDevice<'static>>) {
 }
 
 #[embassy_executor::task]
+async fn measurements(i2c: I2C<'static, I2C0>, mut soil_sensor: SoilMoisture<'static>) {
+    println!("start measurements task");
+    interrupt::enable(Interrupt::I2C_EXT0, interrupt::Priority::Priority1).unwrap();
+
+    let mut bme280 = bme280_rs::Bme280::new(i2c, embassy_time::Delay);
+    if bme280.init().and_then(|_| bme280.configure()).is_err() {
+        return;
+    }
+
+    println!("wait init to complet");
+    Timer::after(Duration::from_secs(5)).await;
+
+    loop {
+        if let Ok(measurement) = bme280.read_humidity() {
+            match measurement {
+                Some(value) => println!("Humidity: {:.2}%", value),
+                None => println!("Error reading humidity"),
+            }
+        }
+        match soil_sensor.get_moisture_precentage() {
+            Ok(value) => info!("Soil moisture: {:.2}%", value),
+            _ => println!("Soil sensor not connected"),
+        };
+        info!(
+            "Soil moisture: {:.2}%",
+            soil_sensor.get_raw_moisture().unwrap()
+        );
+        Timer::after(Duration::from_secs(10)).await;
+    }
+}
+
+#[embassy_executor::task]
 async fn task(stack: &'static Stack<WifiDevice<'static>>) {
     let mut rx_buffer = [0; 4096];
     let mut tx_buffer = [0; 4096];
@@ -151,58 +212,5 @@ async fn task(stack: &'static Stack<WifiDevice<'static>>) {
         }
         Timer::after(Duration::from_millis(500)).await;
     }
-
-    loop {
-        Timer::after(Duration::from_millis(1_000)).await;
-
-        let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
-
-        socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
-
-        let address = match stack
-            .dns_query("www.mobile-j.de", DnsQueryType::A)
-            .await
-            .map(|a| a[0])
-        {
-            Ok(address) => address,
-            Err(e) => {
-                println!("DNS lookup error: {e:?}");
-                continue;
-            }
-        };
-
-        println!("{}", address);
-        let remote_endpoint = (address, 80);
-        println!("connecting...");
-        let r = socket.connect(remote_endpoint).await;
-        if let Err(e) = r {
-            println!("connect error: {:?}", e);
-            continue;
-        }
-        println!("connected!");
-        let mut buf = [0; 1024];
-        loop {
-            use embedded_svc::io::asynch::Write;
-            let r = socket
-                .write_all(b"GET / HTTP/1.0\r\nHost: www.mobile-j.de\r\n\r\n")
-                .await;
-            if let Err(e) = r {
-                println!("write error: {:?}", e);
-                break;
-            }
-            let n = match socket.read(&mut buf).await {
-                Ok(0) => {
-                    println!("read EOF");
-                    break;
-                }
-                Ok(n) => n,
-                Err(e) => {
-                    println!("read error: {:?}", e);
-                    break;
-                }
-            };
-            println!("{}", core::str::from_utf8(&buf[..n]).unwrap());
-        }
-        Timer::after(Duration::from_secs(60)).await;
-    }
+    info!("Ended")
 }

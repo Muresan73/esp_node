@@ -120,6 +120,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4682ae6287fcf752ecaabbfcc7b6f9b72aa33933dc23a554d853aea8eea8635"
 
 [[package]]
+name = "bme280-rs"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "543ad15b2efb1afa90d291755beb747cacd3f58cc6fd1125ff092296561c60e5"
+dependencies = [
+ "embedded-hal 0.2.7",
+ "log",
+]
+
+[[package]]
 name = "byteorder"
 version = "1.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -716,6 +726,7 @@ dependencies = [
 name = "esp_node"
 version = "0.2.0"
 dependencies = [
+ "bme280-rs",
  "dotenvy_macro",
  "embassy-executor",
  "embassy-futures",

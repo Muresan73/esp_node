@@ -5,6 +5,7 @@ name = "esp_node"
 version = "0.2.0"
 
 [dependencies]
+bme280-rs = "0.1.0"
 dotenvy_macro = "0.15.7"
 embassy-executor = { version = "0.3.0", package = "embassy-executor", features = [
     "nightly",
