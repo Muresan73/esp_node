@@ -26,6 +26,7 @@ esp-wifi = { git = "https://github.com/esp-rs/esp-wifi/", features = [
     "embassy-net",
     "embedded-svc",
     "wifi",
+    "ps-min-modem",
 ] }
 hal = { package = "esp32-hal", version = "0.15.0", features = [
     "embassy",
@@ -35,7 +36,7 @@ hal = { package = "esp32-hal", version = "0.15.0", features = [
     "async",
 ] }
 heapless = { version = "0.7.14", default-features = false }
-log = { version = "0.4.18" }
+log = { version = "0.4.18", features = ["release_max_level_info"] }
 static_cell = { version = "1.2.0", features = ["nightly"] }
 
 [profile.dev.package.esp-wifi]

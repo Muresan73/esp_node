@@ -57,7 +57,13 @@ impl<'a> SoilMoisture<'a> {
 
     /// Get precentage read of the moisture.
     pub fn get_moisture_precentage(&mut self) -> MoistureResult<f32> {
-        let measurement = match self.get_raw_moisture()? {
+        let mean: u16 = (0..10)
+            .map(|_| self.get_raw_moisture())
+            .sum::<MoistureResult<u16>>()?
+            / 10;
+
+        log::info!("Mean: {}", mean);
+        let measurement = match mean {
             msmnt if msmnt < 1000 => Err(MoistureError::SensorNotConnected()),
             msmnt => Ok(msmnt),
         }?;
