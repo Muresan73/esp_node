@@ -17,7 +17,7 @@ use hal::embassy::executor::Executor;
 use hal::i2c::I2C;
 use hal::peripherals::{Interrupt, I2C0};
 use hal::{embassy, peripherals::Peripherals, prelude::*, timer::TimerGroup, IO};
-use hal::{interrupt, Rng};
+use hal::{interrupt, Rng, Rtc};
 
 mod sensor;
 use log::info;
@@ -55,10 +55,18 @@ fn main() -> ! {
     )
     .timer0;
 
+    let mut rtc = Rtc::new(peripherals.RTC_CNTL);
+    rtc.rwdt.disable();
+
+    let mut delay = hal::Delay::new(&clocks);
+
+    let mut rng = Rng::new(peripherals.RNG);
+    let seed = rng.random() as u64;
+
     let init = initialize(
         EspWifiInitFor::Wifi,
         timer,
-        Rng::new(peripherals.RNG),
+        rng,
         system.radio_clock_control,
         &clocks,
     )
@@ -76,8 +84,6 @@ fn main() -> ! {
     embassy::init(&clocks, timer_group0.timer0);
 
     let config = Config::dhcpv4(Default::default());
-
-    let seed = 1234; // TODO add time
 
     // Init network stack
     let stack = &*singleton!(Stack::new(
@@ -111,10 +117,11 @@ fn main() -> ! {
 
     let executor = EXECUTOR.init(Executor::new());
     executor.run(|spawner| {
-        // spawner.spawn(connection(controller)).ok();
-        // spawner.spawn(net_task(stack)).ok();
-        // spawner.spawn(task(stack)).ok();
+        spawner.spawn(connection(controller)).ok();
+        spawner.spawn(net_task(stack)).ok();
+        spawner.spawn(task(stack)).ok();
         spawner.spawn(measurements(i2c0, soil_sensor)).ok();
+        spawner.spawn(sleepy_joe(rtc, delay)).ok();
     })
 }
 
@@ -154,6 +161,23 @@ async fn connection(mut controller: WifiController<'static>) {
 #[embassy_executor::task]
 async fn net_task(stack: &'static Stack<WifiDevice<'static>>) {
     stack.run().await
+}
+
+#[embassy_executor::task]
+async fn sleepy_joe(mut rtc: Rtc<'static>, mut delay: hal::Delay) {
+    loop {
+        Timer::after(Duration::from_secs(60)).await;
+        let sleep_timer =
+            hal::rtc_cntl::sleep::TimerWakeupSource::new(core::time::Duration::from_secs(600));
+        println!("up and runnning!");
+        let reason = hal::rtc_cntl::get_reset_reason(hal::Cpu::ProCpu)
+            .unwrap_or(hal::rtc_cntl::SocResetReason::ChipPowerOn);
+        println!("reset reason: {:?}", reason);
+        let wake_reason = hal::rtc_cntl::get_wakeup_cause();
+        println!("wake reason: {:?}", wake_reason);
+
+        rtc.sleep_deep(&[&sleep_timer], &mut delay);
+    }
 }
 
 #[embassy_executor::task]
